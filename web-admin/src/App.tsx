@@ -1,121 +1,111 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
+import { useEffect, useRef, useState } from 'react'
+import type { FormEvent } from 'react'
+import { io } from 'socket.io-client'
+import type { Socket } from 'socket.io-client'
+import type {
+  ClientToServerEvents,
+  DeploymentState,
+  ServerToClientEvents,
+} from '../../shared-types/index'
 import './App.css'
 
+const serverUrl =
+  import.meta.env.VITE_SERVER_URL ||
+  `http://${window.location.hostname}:3001`
+
+type DeploymentSocket = Socket<ServerToClientEvents, ClientToServerEvents>
+
 function App() {
-  const [count, setCount] = useState(0)
+  const socketRef = useRef<DeploymentSocket | null>(null)
+  const [connected, setConnected] = useState(false)
+  const [release, setRelease] = useState('')
+  const [environment, setEnvironment] =
+    useState<DeploymentState['environment']>('staging')
+  const [state, setState] = useState<DeploymentState | null>(null)
+
+  useEffect(() => {
+    const socket: DeploymentSocket = io(serverUrl, { autoConnect: false })
+    socketRef.current = socket
+    socket.on('connect', () => setConnected(true))
+    socket.on('disconnect', () => setConnected(false))
+    socket.on('connect_error', () => setConnected(false))
+    socket.on('state:update', (nextState) => setState(nextState))
+    socket.connect()
+
+    return () => {
+      socket.removeAllListeners()
+      socket.disconnect()
+      socketRef.current = null
+    }
+  }, [])
+
+  function createRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const trimmedRelease = release.trim()
+    const socket = socketRef.current
+    if (!socket?.connected || !trimmedRelease) return
+
+    socket.emit('deployment:request', {
+      release: trimmedRelease,
+      environment,
+      agentRequest: `Request deployment of release ${trimmedRelease} to ${environment}.`,
+    })
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
+    <main className="admin">
+      <header>
+        <h1>Deployment Admin</h1>
+        <p className={connected ? 'connection connected' : 'connection'} role="status">
+          {connected ? 'Connected' : 'Disconnected'}
+        </p>
+      </header>
+
+      <section className="panel" aria-labelledby="request-heading">
+        <h2 id="request-heading">Create a deployment request</h2>
+        <form onSubmit={createRequest}>
+          <label htmlFor="release">Release</label>
+          <input
+            id="release"
+            value={release}
+            onChange={(event) => setRelease(event.target.value)}
+            placeholder="1.0.0"
+            required
+          />
+          <label htmlFor="environment">Environment</label>
+          <select
+            id="environment"
+            value={environment}
+            onChange={(event) => {
+              const value = event.target.value
+              if (value === 'staging' || value === 'production') setEnvironment(value)
+            }}
+          >
+            <option value="staging">staging</option>
+            <option value="production">production</option>
+          </select>
+          <button type="submit" disabled={!connected || !release.trim()}>
+            Create Agent Request
+          </button>
+        </form>
       </section>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
+      <section className="panel" aria-labelledby="state-heading">
+        <h2 id="state-heading">Current shared state</h2>
+        {!connected && state && <p>Disconnected. Showing last received state.</p>}
+        {state ? (
+          <dl>
+            <dt>Release</dt><dd>{state.release || '—'}</dd>
+            <dt>Environment</dt><dd>{state.environment}</dd>
+            <dt>Status</dt><dd>{state.status}</dd>
+            <dt>Agent request</dt><dd>{state.agentRequest ?? '—'}</dd>
+            <dt>Last action</dt><dd>{state.lastAction ?? '—'}</dd>
+          </dl>
+        ) : (
+          <p>Waiting for the server’s current state.</p>
+        )}
       </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    </main>
   )
 }
 
